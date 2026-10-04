@@ -1,0 +1,644 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flashback ZX</title>
+<meta name="description" content="Flashback (1992) on an emulated ZX Spectrum +3, booting its own 720K disk in the browser.">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Michroma&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --ground: #15171c; --panel: #1d2026; --line: #2c3038; --text: #e4e2da; --muted: #8f949c;
+    --accent: #00d7d7; --accent-bright: #00ffff; --key-bg: #262a31; --key-edge: #3a3f48;
+    --stripe-red: #d70000; --stripe-yellow: #d7d700; --stripe-green: #00d700; --stripe-cyan: #00d7d7;
+    --bezel: #0a0b0d; --error: #e0574f;
+    color-scheme: dark;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --ground: #d8d6cf; --panel: #e6e4de; --line: #c2bfb6; --text: #1a1c20; --muted: #5d626b;
+      --accent: #00797a; --accent-bright: #00a3a4; --key-bg: #efede8; --key-edge: #b9b6ad; --bezel: #101114; --error: #b3261e;
+      color-scheme: light;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { touch-action: manipulation; }
+  body { margin: 0; background: var(--ground); color: var(--text); font: 15px/1.55 "IBM Plex Sans", "Segoe UI", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  a { color: var(--accent); text-underline-offset: 3px; }
+  a:focus-visible, button:focus-visible, select:focus-visible { outline: 2px solid var(--accent-bright); outline-offset: 3px; }
+  main { max-width: 900px; margin: 0 auto; padding: 32px 16px 48px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 28px; }
+  header { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  h1 { margin: 0; font: 400 26px/1.1 "Michroma", "Arial Black", sans-serif; letter-spacing: 0.02em; }
+  h1 small { display: block; margin-top: 8px; font: 500 11px/1 "IBM Plex Mono", ui-monospace, monospace; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); }
+  .flash { display: flex; height: 14px; transform: skewX(-24deg); }
+  .flash i { width: 11px; }
+  .flash i:nth-child(1) { background: var(--stripe-red); } .flash i:nth-child(2) { background: var(--stripe-yellow); }
+  .flash i:nth-child(3) { background: var(--stripe-green); } .flash i:nth-child(4) { background: var(--stripe-cyan); }
+  .set { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; justify-items: center; }
+  .bezel { background: var(--bezel); padding: 14px; border-radius: 6px; box-shadow: 0 0 0 1px var(--line), 0 24px 60px -30px #000; width: 668px; max-width: 100%; }
+  #screen { display: block; width: 100%; aspect-ratio: 4 / 3; background: #000; outline: none; image-rendering: pixelated; }
+  /* touch: a pad under the screen (over it, at the edges, in fullscreen) */
+  .touch { display: none; justify-content: space-between; align-items: center; gap: 12px; margin-top: 12px; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: none; }
+  .touch-on .touch { display: flex; }
+  .dpad { position: relative; width: 144px; height: 144px; border-radius: 50%; background: var(--key-bg); border: 1px solid var(--key-edge); touch-action: none; flex: none; }
+  .dpad i { position: absolute; width: 48px; height: 48px; display: grid; place-items: center; font: 500 14px/1 "IBM Plex Mono", ui-monospace, monospace; color: var(--muted); font-style: normal; border-radius: 10px; }
+  .dpad i.on, .tkey.on { background: var(--accent); color: var(--ground); }
+  .dpad .u { left: 48px; top: 4px; } .dpad .d { left: 48px; bottom: 4px; } .dpad .l { left: 4px; top: 48px; } .dpad .r { right: 4px; top: 48px; }
+  .acts { display: grid; grid-template-columns: repeat(3, auto); gap: 10px; align-items: center; justify-items: center; }
+  .tkey { display: grid; place-items: center; width: 54px; height: 48px; border-radius: 10px; background: var(--key-bg); border: 1px solid var(--key-edge); border-bottom-width: 3px; font: 500 12px/1.1 "IBM Plex Mono", ui-monospace, monospace; color: var(--text); text-align: center; touch-action: none; }
+  .tkey.big { grid-column: span 3; width: 100%; height: 64px; font-size: 14px; }
+  /* fullscreen: the element's own, or (where a page cannot have one: the iPhone) the page's */
+  .play.fs { position: fixed; inset: 0; z-index: 10; margin: 0; background: #000; display: grid; place-items: center; }
+  .play.fs .bezel { padding: 0; border-radius: 0; box-shadow: none; background: #000; width: min(100vw, calc(100vh * 4 / 3)); width: min(100vw, calc(100dvh * 4 / 3)); max-width: none; }
+  .play.fs .touch { position: absolute; left: 0; right: 0; bottom: 0; margin: 0; padding: 12px calc(12px + env(safe-area-inset-right)) calc(12px + env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-left)); pointer-events: none; }
+  .play.fs .touch > * { pointer-events: auto; opacity: 0.6; }
+  .fs-exit { display: none; position: absolute; top: calc(10px + env(safe-area-inset-top)); right: calc(10px + env(safe-area-inset-right)); opacity: 0.7; }
+  .play.fs .fs-exit { display: block; }
+  body.fs-lock { overflow: hidden; }
+  .strip { width: 668px; max-width: 100%; display: grid; justify-items: center; gap: 8px; font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 13px; text-align: center; }
+  #status { color: var(--muted); min-height: 1.5em; }
+  #status.error { color: var(--error); }
+  .buttons { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: center; }
+  button, select {
+    font: 500 13px/1 "IBM Plex Mono", ui-monospace, monospace; letter-spacing: 0.04em; color: var(--text);
+    background: var(--key-bg); border: 1px solid var(--key-edge); border-bottom-width: 3px; border-radius: 4px; padding: 8px 12px; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button:active { border-bottom-width: 1px; transform: translateY(2px); }
+  button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent-bright); }
+  /* the screen with the display choice beside it (above it when narrow) */
+  .screen-row { display: grid; grid-template-columns: auto 124px; gap: 14px; align-items: start; justify-content: center; width: 100%; }
+  .screen-col { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; }
+  .screen-col .strip { justify-self: center; }
+  .screen-row .bezel { width: 668px; max-width: 100%; }
+  fieldset.display { margin: 0; padding: 0; border: 0; display: grid; gap: 6px; font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 13px; }
+  fieldset.display legend { padding: 0 0 6px; color: var(--muted); letter-spacing: 0.12em; text-transform: uppercase; font-size: 11px; }
+  fieldset.display label { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border: 1px solid var(--key-edge); border-bottom-width: 3px; border-radius: 4px; background: var(--key-bg); cursor: pointer; }
+  fieldset.display label:hover { border-color: var(--accent); }
+  fieldset.display input { margin: 0; accent-color: var(--accent); }
+  fieldset.display label:has(input:checked) { border-color: var(--accent); color: var(--accent-bright); }
+  fieldset.display label:has(input:focus-visible) { outline: 2px solid var(--accent-bright); outline-offset: 2px; }
+  @media (max-width: 720px), (pointer: coarse) and (max-height: 520px) {
+    main > header, fieldset.display { display: none !important; }
+    main { padding-top: 12px; }
+  }
+  @media (max-width: 860px) {
+    .screen-row { grid-template-columns: minmax(0, 668px); }
+    .screen-row .bezel { width: auto; }
+    fieldset.display { display: flex; flex-wrap: wrap; order: -1; min-width: 0; }
+    fieldset.display legend { float: left; width: 100%; padding: 0 0 2px; }
+  }
+  .keys { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 40px; }
+  @media (max-width: 720px) { .keys { grid-template-columns: 1fr; } }
+  h3 { margin: 0 0 6px; font: 500 12px/1.4 "IBM Plex Mono", ui-monospace, monospace; color: var(--muted); }
+  .note { color: var(--muted); margin: 12px 0 0; font-size: 13px; }
+  .facts + h3 { margin-top: 18px; }
+  h2 { margin: 0 0 12px; font: 500 11px/1 "IBM Plex Mono", ui-monospace, monospace; letter-spacing: 0.16em; text-transform: uppercase; color: var(--accent); }
+  table { border-collapse: collapse; width: 100%; }
+  td { padding: 7px 0; border-top: 1px solid var(--line); vertical-align: top; }
+  tr:first-child td { border-top: 0; }
+  td:first-child { white-space: nowrap; width: 1%; padding-right: 16px; }
+  kbd { display: inline-block; min-width: 26px; text-align: center; padding: 3px 7px; font: 500 12px/1.2 "IBM Plex Mono", ui-monospace, monospace; color: var(--text); background: var(--key-bg); border: 1px solid var(--key-edge); border-bottom-width: 2px; border-radius: 3px; }
+  kbd + kbd { margin-left: 3px; }
+  .facts { margin: 0; padding: 0; list-style: none; display: grid; gap: 10px; }
+  .facts li { padding-left: 14px; position: relative; }
+  .facts li::before { content: ""; position: absolute; left: 0; top: 0.62em; width: 6px; height: 6px; background: var(--accent); }
+  footer { color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); padding-top: 16px; display: grid; gap: 8px; }
+  footer p { margin: 0; max-width: 75ch; }
+  @media (prefers-reduced-motion: reduce) { button:active { transform: none; } }
+</style>
+</head>
+<body>
+<script>
+  // The emulator (tools/emu/plus3.mjs, inlined by tools/site.py --public):
+  // Klive IDE's ZX Spectrum +3 core with our uPD765A floppy controller.
+// A ZX Spectrum +3 for the tests and the player page: Klive IDE's +3 core
+// with tools/emu/upd765.c as its floppy controller, compiled to
+// build/emu/plus3.wasm by tools/emu/build_emu.py.  No DOM, no node APIs:
+// the caller hands over the wasm bytes and the four ROMs.
+//
+//   const m = await Plus3.create(wasmBytes, [rom0, rom1, rom2, rom3]);
+//   m.insertDisk(0, dskBytes);          // drive A: an 80-track double-sided drive by default
+//   m.runFrame();                       // one 50 Hz frame (70,908 T-states)
+//   m.bank(3)[0x100];                   // RAM bank 3, offset $100
+//   m.setKey(7, 0x01, true);            // half-row 7 ($7FFE), bit 0: SPACE
+
+const BANK_SIZE = 0x4000;
+const FRAME_TSTATES = 70908;
+
+class Plus3 {
+  static async create(wasm, roms) {
+    const module = wasm instanceof WebAssembly.Module ? wasm : await WebAssembly.compile(wasm);
+    const instance = await WebAssembly.instantiate(module, {});
+    return new Plus3(instance, roms);
+  }
+
+  constructor(instance, roms) {
+    this.x = instance.exports;
+    this.mem = this.x.memory;
+    this.roms = roms;
+    this.powerOn();
+  }
+
+  // --- the machine ------------------------------------------------------
+  /** power on: RAM cleared, the ROMs in, drive A an 80-track double-sided
+   *  drive with no disk, drive B absent */
+  powerOn() {
+    this.x.spp3eHardReset();
+    const rom = new Uint8Array(this.mem.buffer, this.x.spp3eRomPtr(), 4 * BANK_SIZE);
+    this.roms.forEach((r, i) => rom.set(r.subarray(0, BANK_SIZE), i * BANK_SIZE));
+    this.setDrive(0, 2, 80);
+    this.setDrive(1, 0, 0);
+    this.x.spp3eReset();
+  }
+  /** the reset button: RAM kept, disks stay in */
+  reset() { this.x.spp3eReset(); }
+
+  runFrame() { this.x.spp3eExecuteFrame(); }
+  step() { this.x.spp3eExecuteInstruction(); }
+  get frames() { return this.x.spp3eGetFrames(); }
+  /** T-states since power-on (exact up to 2^53) */
+  get tstates() { return this.x.p3NowHigh() * 0x100000000 + this.x.p3NowLow(); }
+  /** T-states into the current frame */
+  get frameTstate() { return this.x.spp3eGetCurrentFrameTact(); }
+
+  // --- the CPU ----------------------------------------------------------
+  get pc() { return this.x.spp3eGetCpuPc(); }
+  set pc(v) { this.x.spp3eSetCpuPc(v); }
+  get sp() { return this.x.spp3eGetCpuSp(); }
+  set sp(v) { this.x.spp3eSetCpuSp(v); }
+  get halted() { return this.x.spp3eGetCpuHalted() !== 0; }
+  get iff1() { return this.x.spp3eGetCpuIff1() !== 0; }
+  get im() { return this.x.spp3eGetCpuInterruptMode(); }
+  get i() { return this.x.spp3eGetCpuIr() >> 8; }
+
+  // --- memory -----------------------------------------------------------
+  /** a live view of RAM bank n (the CPU reads and writes the same bytes) */
+  bank(n) { return new Uint8Array(this.mem.buffer, this.x.spp3eRamPtr() + n * BANK_SIZE, BANK_SIZE); }
+  /** what the CPU sees at addr with the current paging */
+  peek(addr) { return this.x.spp3eReadMemory(addr & 0xffff); }
+  poke(addr, v) { this.x.spp3eWriteMemory(addr & 0xffff, v & 0xff); }
+  /** paging: the bank at $C000, the ROM in $0000, special mode (config) */
+  get paging() {
+    return {
+      bank: this.x.spp3eGetSelectedBank(),
+      rom: this.x.spp3eGetSelectedRom(),
+      special: this.x.spp3eGetInSpecialPagingMode() ? this.x.spp3eGetSpecialConfigMode() : null,
+      shadowScreen: this.x.spp3eGetUseShadowScreen() !== 0,
+      motor: this.x.spp3eGetDiskMotorOn() !== 0,
+    };
+  }
+  out(port, value) { this.x.spp3eWritePort(port, value); }
+  get border() { return this.x.spp3eGetBorderColor(); }
+
+  // --- keyboard ---------------------------------------------------------
+  /** half-row 0..7 ($FEFE .. $7FFE), bit mask 0x01..0x10 */
+  setKey(row, mask, down) {
+    for (let bit = 0; bit < 5; bit++) if (mask & (1 << bit)) this.x.spp3eSetKeyStatus(row * 5 + bit, down ? 1 : 0);
+  }
+  releaseKeys() { for (let k = 0; k < 40; k++) this.x.spp3eSetKeyStatus(k, 0); }
+
+  // --- display ----------------------------------------------------------
+  get screenWidth() { return this.x.spp3eGetScreenWidth(); }
+  get screenHeight() { return this.x.spp3eGetScreenHeight(); }
+  /** the rendered frame: one 0xAABBGGRR word a pixel, screenWidth x screenHeight */
+  pixels() {
+    return new Uint32Array(this.mem.buffer, this.x.spp3ePixelBufferPtr(), this.screenWidth * this.screenHeight);
+  }
+
+  // --- sound ------------------------------------------------------------
+  setSampleRate(rate) { this.x.spp3eSetAudioSampleRate(rate); }
+  /** this frame's samples: interleaved left, right (int16) */
+  samples() {
+    return new Int16Array(this.mem.buffer, this.x.spp3eAudioSamplesPtr(), this.x.spp3eGetAudioSampleCount() * 2);
+  }
+
+  // --- the drives -------------------------------------------------------
+  /** heads 1 or 2, cylinders 40 or 80; heads 0 = no drive */
+  setDrive(drive, heads, cylinders) { this.x.p3DriveSetup(drive, heads, cylinders); }
+  /** a standard or extended DSK image into drive 0 (A) or 1 (B) */
+  insertDisk(drive, bytes, { writeProtected = false } = {}) {
+    const cap = this.x.p3DiskImageCapacity();
+    if (bytes.length > cap) throw new Error(`disk image of ${bytes.length} bytes: the drive takes ${cap}`);
+    new Uint8Array(this.mem.buffer, this.x.p3DiskImagePtr(drive), bytes.length).set(bytes);
+    const r = this.x.p3DiskInsert(drive, bytes.length, writeProtected ? 1 : 0);
+    if (r !== 0) throw new Error(`not a DSK image the drive can read (error ${r})`);
+  }
+  ejectDisk(drive) { this.x.p3DiskEject(drive); }
+  /** the controller's counters and its last command and result bytes */
+  fdc() {
+    this.x.p5BetaIntrq?.();                    // the Pentagon's WD1793 catches up (the head unloads lazily)
+    const v = new DataView(this.mem.buffer, this.x.p3FdcStatsPtr(), 40);
+    const bytes = (o, n) => Array.from({ length: n }, (_, i) => v.getUint8(o + i));
+    return {
+      commands: v.getUint32(0, true), sectorsRead: v.getUint32(4, true), sectorsWritten: v.getUint32(8, true),
+      overruns: v.getUint32(12, true), steps: v.getUint32(16, true), errors: v.getUint32(20, true),
+      lastCommand: bytes(24, 9), lastResult: bytes(33, 7),
+      cylinder: this.x.p3DriveCylinder(0), motor: this.x.p3DriveMotor(0) !== 0, phase: this.x.p3FdcPhase(),
+    };
+  }
+
+  // --- state ------------------------------------------------------------
+  /** the whole machine (the core keeps every bit of state in its memory) */
+  snapshot() { return new Uint8Array(this.mem.buffer).slice(); }
+  restore(snap) { new Uint8Array(this.mem.buffer).set(snap); }
+}
+
+</script>
+<main>
+  <header>
+    <h1>Flashback ZX<small>Level 1 &middot; the jungle &middot; ZX Spectrum +3</small></h1>
+    <div class="flash" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+  </header>
+
+  <section class="set">
+    <div class="screen-row">
+      <div class="screen-col">
+        <div class="play" id="play">
+          <div class="bezel"><canvas id="screen" tabindex="0" aria-label="The Spectrum's screen: click it, then play with the keyboard"></canvas></div>
+          <div class="touch" aria-hidden="true">
+            <div class="dpad" id="dpad"><i class="u" data-key="KeyQ">Q</i><i class="l" data-key="KeyO">O</i><i class="r" data-key="KeyP">P</i><i class="d" data-key="KeyA">A</i></div>
+            <div class="acts">
+              <div class="tkey" data-key="Enter">GUN</div><div class="tkey" data-key="KeyI">ITEM</div><div class="tkey" data-key="KeyU">USE</div>
+              <div class="tkey big" data-key="Space">SPACE</div>
+            </div>
+          </div>
+          <button class="fs-exit" id="fs-exit" type="button" aria-label="Leave fullscreen">&times;</button>
+        </div>
+        <div class="strip">
+          <span id="status" role="status">Loading the emulator&hellip;</span>
+          <span class="buttons">
+            <button id="sound" type="button" aria-pressed="false" title="the AY (the browser wants a click first)">Sound off</button>
+            <button id="disk-speed" type="button" aria-pressed="true" title="while the disk loads (the interrupts off), run the machine ten times as fast">Fast disk</button>
+            <button id="fullscreen" type="button">Fullscreen</button>
+            <button id="restart" type="button">Restart</button>
+          </span>
+        </div>
+      </div>
+      <fieldset class="display" id="display">
+        <legend>Display</legend>
+        <label><input type="radio" name="display" value="none">Sharp</label>
+        <label><input type="radio" name="display" value="scanlines">Scanlines</label>
+        <label><input type="radio" name="display" value="pal">PAL TV</label>
+        <label><input type="radio" name="display" value="ntsc">NTSC TV</label>
+      </fieldset>
+    </div>
+  </section>
+
+  <section>
+    <h2>Keys</h2>
+    <div class="keys">
+      <table>
+        <tr><td><kbd>O</kbd><kbd>P</kbd></td><td>walk left / right</td></tr>
+        <tr><td><kbd>Q</kbd><kbd>A</kbd></td><td>jump up (held under a ledge: climb onto it) / crouch</td></tr>
+        <tr><td><kbd>ENTER</kbd></td><td>draw / holster the gun &mdash; with the gun out Conrad cannot walk, but he can still roll</td></tr>
+        <tr><td><kbd>I</kbd></td><td>the next item becomes the current one (top right)</td></tr>
+        <tr><td><kbd>U</kbd></td><td>use the current item: a key, card or cartridge in its lock, at a generator; crouched, put it down</td></tr>
+      </table>
+      <div>
+        <h3>with SPACE held</h3>
+        <table>
+          <tr><td><kbd>SPACE</kbd></td><td>at the top of a jump: grab the ledge; aiming: fire; at a switch or a person: use it, talk</td></tr>
+          <tr><td>+ <kbd>O</kbd><kbd>P</kbd></td><td>run</td></tr>
+          <tr><td>+ <kbd>Q</kbd></td><td>long jump; running: running jump; hanging: climb up; on a lift: up</td></tr>
+          <tr><td>+ <kbd>A</kbd></td><td>back to an edge: drop down; hanging: let go; running: roll; crouched on an item: pick it up; on a lift: down</td></tr>
+        </table>
+      </div>
+    </div>
+    <p class="note">Click the screen first so it has the keyboard. On a touch screen the pad under the screen has the same keys (GUN is ENTER, ITEM I, USE U), and Fullscreen puts it over the picture.</p>
+  </section>
+
+  <section>
+    <h2>What this is</h2>
+    <ul class="facts">
+      <li>Flashback&rsquo;s first level on a ZX Spectrum +3. Conrad runs on the DOS game&rsquo;s own state tables, interpreted by a Z80 engine, move for move as the original.</li>
+      <li>All 26 jungle rooms, each the original picture fitted to the Spectrum&rsquo;s two colours per 8&times;8 cell. 128K cannot hold a level, so the level is a 720K +3 disk: the +3 boots it from its Loader menu and the engine reads each room off the disk as Conrad enters it. The machine here is an emulated +3 whose drive turns the disk in real time, so the loading is a real +3&rsquo;s (<em>Fast disk</em> speeds it up).</li>
+      <li>The disk is built from the freely distributed 1993 PC demo of Flashback, whose first level is the whole jungle.</li>
+    </ul>
+    <h3>In the level</h3>
+    <ul class="facts">
+      <li><strong>Objects.</strong> The items lie where the original puts them &mdash; the holocube, the cartridge, a key, stones, the teleporter, credits &mdash; and the inventory starts with the gun, the shield and some credits. Locks, the switch, the generators and the force-field bridge work, as do the four doors and the five lifts: their floor sensors call them, and <kbd>1</kbd> / <kbd>2</kbd> call the lifts on screen up / down as a helper. The wounded man and the old man talk and hand things over. The level&rsquo;s exit plays the fall down the shaft.</li>
+      <li><strong>Enemies.</strong> The guards spot Conrad, aim and shoot, standing or crouched; each takes three hits.</li>
+      <li><strong>Conrad cannot die (yet).</strong> A hit knocks him back, but he gets up every time. Walking off the edge of the built world puts him back at the start.</li>
+      <li><strong>No saving yet.</strong> The save station is there, but there is nothing to restore; <em>Restart</em> starts the level over.</li>
+    </ul>
+    <p class="note">Found a bug, or something that plays differently from the original? Please <a href="https://github.com/chvjak/Flashback-ZXSpectrum/issues">open an issue</a>.</p>
+  </section>
+
+  <section>
+    <h2>The disks</h2>
+    <p style="margin: 0; max-width: 66ch;"><a href="https://github.com/chvjak/Flashback-ZXSpectrum/releases/latest/download/flashback-l1.dsk">flashback-l1.dsk</a> for a +3: any +3 emulator, or a real +3 with an 80-track double-sided drive A (the 3.5&Prime; upgrade; a drive setting in Fuse, ZEsarUX and the like). Insert it and pick Loader.</p>
+    <p style="margin: 12px 0 0; max-width: 66ch;"><a href="https://github.com/chvjak/Flashback-ZXSpectrum/releases/latest/download/flashback-l1.trd">flashback-l1.trd</a> for a Pentagon 128, or any 128K with a Beta&nbsp;128 interface and TR-DOS: 640K, 80 tracks both sides; in TR-DOS, <code>RUN</code>. The same game; this page plays the +3 one.</p>
+  </section>
+
+  <footer>
+    <p>Flashback &copy; 1992 Delphine Software. This is an unofficial fan port, not affiliated with or endorsed by the rights holders; its data comes from the game&rsquo;s free PC demo. Behaviour derived with <a href="https://github.com/cyxx/REminiscence">REminiscence</a>.</p>
+    <p>The emulator is <a href="https://github.com/Dotneteer/kliveide">Klive IDE</a>&rsquo;s ZX Spectrum +3 core with a floppy controller modelled on <a href="https://fuse-emulator.sourceforge.net/">Fuse</a>&rsquo;s, under the GPL (<a href="https://github.com/chvjak/Flashback-ZXSpectrum/tree/main/emulator">its source</a>). The display filters are in the spirit of Fuse&rsquo;s TV scalers. +3 ROMs &copy; Amstrad, who allow their distribution with emulators. Visits are counted, without cookies, by Cloudflare Web Analytics.</p>
+  </footer>
+</main>
+
+<script>
+(() => {
+  const status = document.getElementById('status');
+  const say = (text, error) => { status.textContent = text; status.classList.toggle('error', !!error); };
+  try { new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0])); }
+  catch (e) { say('This browser blocks WebAssembly, so the emulator cannot run. (' + e.message + ')', true); return; }
+
+  const FILES = {"plus3.wasm": "plus3.wasm?v=f164bb01288f", "plus3-0.rom": "plus3-0.rom?v=841d54545c74", "plus3-1.rom": "plus3-1.rom?v=6d6ccab28f25", "plus3-2.rom": "plus3-2.rom?v=c5590212a269", "plus3-3.rom": "plus3-3.rom?v=8ec5cb9fd7ec", "flashback-l1.dsk": "flashback-l1.dsk?v=297f81a1cab5"};               // name -> its URL with a version (tools/site.py)
+  const SYMS = {"tick_count": 45668, "cur_room": 45673};                 // engine variables the status line shows
+  const get = async name => {
+    const r = await fetch(FILES[name]);
+    if (!r.ok) throw new Error(`${name}: HTTP ${r.status}`);
+    return new Uint8Array(await r.arrayBuffer());
+  };
+  const store = (() => { try { return window.localStorage; } catch (e) { return null; } })();
+  const remember = (k, v) => { try { store?.setItem('fbzx.' + k, v); } catch (e) { /* private window */ } };
+  const recall = k => { try { return store?.getItem('fbzx.' + k); } catch (e) { return null; } };
+
+  // ------------------------------------------------------------------ the display
+  // The core's frame (one 0xAABBGGRR word a pixel, less its first line) as a
+  // texture; a fragment shader draws it at the canvas's own resolution:
+  // sharp, with scanlines, or as a PAL / NTSC set would -- the colour carried
+  // at less bandwidth than the brightness, so it bleeds a pixel or two
+  // sideways (NTSC more, its colour hotter), the lines of a TV raster, and
+  // now and then a tear: a band of lines that slips sideways for a moment
+  // as it rolls down (not with reduced motion).  Without WebGL: plain 2D.
+  const canvas = document.getElementById('screen');
+  const MODES = { none: 0, scanlines: 1, pal: 2, ntsc: 3 };
+  let mode = MODES[recall('display')] !== undefined ? recall('display') : 'none';
+  const radios = [...document.querySelectorAll('#display input')];
+  for (const r of radios) r.checked = r.value === mode;
+  const calm = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  let tear = { at: performance.now() + 4000, y: 0 };
+  const tearNow = now => {                                // -> [band centre 0..1 (or -1), strength]
+    if (calm || MODES[mode] < 2) return [-1, 0];
+    const t = (now - tear.at) / 420;
+    if (t < 0) return [-1, 0];
+    if (t > 1) { tear = { at: now + 6000 + Math.random() * 14000, y: Math.random() * 0.7 }; return [-1, 0]; }
+    return [tear.y + t * 0.25, Math.sin(t * Math.PI)];
+  };
+  window.fbzxTear = (y = 0.3) => { tear = { at: performance.now(), y }; };   // (for trying it out)
+  const makeDisplay = (w, h) => {
+    const scale = 3;
+    canvas.width = w * scale; canvas.height = h * scale;
+    const gl = canvas.getContext('webgl', { antialias: false, preserveDrawingBuffer: false });
+    if (!gl) {
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d'), image = ctx.createImageData(w, h), px = new Uint32Array(image.data.buffer);
+      for (const r of radios) { r.disabled = r.value !== 'none'; r.checked = r.value === 'none'; }
+      document.getElementById('display').title = 'this browser has no WebGL: the picture is drawn sharp';
+      return frame => { px.set(frame); ctx.putImageData(image, 0, 0); };
+    }
+    const shader = (type, src) => {
+      const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+      return s;
+    };
+    const prog = gl.createProgram();
+    gl.attachShader(prog, shader(gl.VERTEX_SHADER, `
+      attribute vec2 p; varying vec2 uv;
+      void main() { uv = vec2(p.x * 0.5 + 0.5, 0.5 - p.y * 0.5); gl_Position = vec4(p, 0.0, 1.0); }`));
+    gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, `
+      precision mediump float;
+      varying vec2 uv; uniform sampler2D tex; uniform vec2 size; uniform int mode;
+      uniform float tearY, tearK, phase;
+      vec3 at(vec2 p, float dx) { return texture2D(tex, p + vec2(dx / size.x, 0.0)).rgb; }
+      vec3 yuv(vec3 c) { return vec3(dot(c, vec3(0.299, 0.587, 0.114)), dot(c, vec3(-0.147, -0.289, 0.436)), dot(c, vec3(0.615, -0.515, -0.100))); }
+      vec3 rgb(vec3 c) { return vec3(c.x + 1.140 * c.z, c.x - 0.395 * c.y - 0.581 * c.z, c.x + 2.032 * c.y); }
+      void main() {
+        vec2 p = uv;
+        float band = 0.0;
+        if (tearY >= 0.0) {
+          // the tear: lines near tearY slip sideways, a ragged few pixels
+          band = tearK * (1.0 - smoothstep(0.0, 0.035, abs(uv.y - tearY)));
+          float line = floor(uv.y * size.y);
+          p.x -= band * (3.0 + 2.0 * sin(line * 1.7 + phase)) / size.x;
+        }
+        vec3 c = at(p, 0.0);
+        if (mode >= 2) {
+          // brightness kept sharp; colour spread over its neighbours:
+          // PAL a pixel each side, NTSC two and a little brightness too
+          vec3 m = yuv(c), l = yuv(at(p, -1.0)), r = yuv(at(p, 1.0));
+          float y = m.x;
+          vec2 ch;
+          if (mode == 2) {
+            ch = m.yz * 0.5 + (l.yz + r.yz) * 0.25;
+          } else {
+            vec3 ll = yuv(at(p, -2.0)), rr = yuv(at(p, 2.0));
+            y = m.x * 0.86 + (l.x + r.x) * 0.07;
+            ch = (m.yz * 0.36 + (l.yz + r.yz) * 0.24 + (ll.yz + rr.yz) * 0.08) * 1.12;
+          }
+          c = clamp(rgb(vec3(y, ch)), 0.0, 1.0);
+          c += band * 0.10;
+        }
+        if (mode >= 1) {
+          // the raster: each source line a bright band with a darker gap
+          float line = fract(p.y * size.y);
+          float k = mode == 1 ? 0.55 : 0.78;
+          c *= mix(k, 1.06, smoothstep(0.0, 0.5, 1.0 - abs(line - 0.5) * 2.0));
+        }
+        gl_FragColor = vec4(c, 1.0);
+      }`));
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+    gl.useProgram(prog);
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+    const p = gl.getAttribLocation(prog, 'p');
+    gl.enableVertexAttribArray(p);
+    gl.vertexAttribPointer(p, 2, gl.FLOAT, false, 0, 0);
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.NEAREST], [gl.TEXTURE_MAG_FILTER, gl.NEAREST],
+                          [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.uniform2f(gl.getUniformLocation(prog, 'size'), w, h);
+    const u = name => gl.getUniformLocation(prog, name);
+    const modeAt = u('mode'), tearYAt = u('tearY'), tearKAt = u('tearK'), phaseAt = u('phase');
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    return frame => {
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(frame.buffer, frame.byteOffset, frame.byteLength));
+      const now = performance.now(), [ty, tk] = tearNow(now);
+      gl.uniform1i(modeAt, MODES[mode]);
+      gl.uniform1f(tearYAt, ty); gl.uniform1f(tearKAt, tk); gl.uniform1f(phaseAt, (now / 40) % 6.283);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    };
+  };
+  for (const r of radios) r.addEventListener('change', () => { if (r.checked) { mode = r.value; remember('display', mode); } });
+
+  // ------------------------------------------------------------------ keys, sound
+  const MATRIX = {};   // KeyboardEvent.code -> [[half-row, bit], ...]; half-rows $FEFE .. $7FFE
+  [['ShiftLeft', 'KeyZ', 'KeyX', 'KeyC', 'KeyV'], ['KeyA', 'KeyS', 'KeyD', 'KeyF', 'KeyG'],
+   ['KeyQ', 'KeyW', 'KeyE', 'KeyR', 'KeyT'], ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'],
+   ['Digit0', 'Digit9', 'Digit8', 'Digit7', 'Digit6'], ['KeyP', 'KeyO', 'KeyI', 'KeyU', 'KeyY'],
+   ['Enter', 'KeyL', 'KeyK', 'KeyJ', 'KeyH'], ['Space', 'ControlLeft', 'KeyM', 'KeyN', 'KeyB'],
+  ].forEach((row, r) => row.forEach((code, bit) => { MATRIX[code] = [[r, 1 << bit]]; }));
+  MATRIX.ShiftRight = MATRIX.ShiftLeft;
+  MATRIX.ControlRight = MATRIX.AltLeft = MATRIX.AltRight = MATRIX.ControlLeft;
+  const caps = MATRIX.ShiftLeft[0];
+  Object.assign(MATRIX, {
+    Backspace: [caps, MATRIX.Digit0[0]], ArrowLeft: [caps, MATRIX.Digit5[0]], ArrowDown: [caps, MATRIX.Digit6[0]],
+    ArrowUp: [caps, MATRIX.Digit7[0]], ArrowRight: [caps, MATRIX.Digit8[0]],
+  });
+  let machine = null;
+  // a Spectrum key is down while anything holds it: the keyboard, a finger
+  let held = new Map();
+  const setKeys = (code, on) => { for (const [r, b] of MATRIX[code] || []) machine?.setKey(r, b, on); };
+  const press = code => { const n = (held.get(code) || 0) + 1; held.set(code, n); if (n === 1) setKeys(code, true); };
+  const release = code => { const n = (held.get(code) || 0) - 1; if (n > 0) held.set(code, n); else { held.delete(code); if (n === 0) setKeys(code, false); } };
+  const down = new Set();
+  canvas.addEventListener('keydown', e => { if (MATRIX[e.code]) { e.preventDefault(); if (!down.has(e.code)) { down.add(e.code); press(e.code); } } });
+  canvas.addEventListener('keyup', e => { if (MATRIX[e.code]) { e.preventDefault(); if (down.delete(e.code)) release(e.code); } });
+  canvas.addEventListener('blur', () => { for (const code of down) release(code); down.clear(); });
+
+  // the touch pad: shown on a touch screen (or after the first touch).  The
+  // pad is one control -- a finger held on it slides between the four
+  // directions; the other keys are held while touched.  Each finger is
+  // tracked by itself, so SPACE and a direction go together.
+  const root = document.documentElement;
+  if (window.matchMedia?.('(pointer: coarse)').matches) root.classList.add('touch-on');
+  window.addEventListener('pointerdown', e => { if (e.pointerType === 'touch') root.classList.add('touch-on'); }, { capture: true });
+  const dpad = document.getElementById('dpad');
+  const fingers = new Map();                               // pointerId -> [element, key]
+  const touchKey = (id, el) => {
+    const [oldEl, old] = fingers.get(id) || [];
+    const code = el?.dataset.key;
+    if (code === old) return;
+    if (old) { release(old); oldEl.classList.remove('on'); }
+    if (code) { press(code); el.classList.add('on'); fingers.set(id, [el, code]); } else fingers.delete(id);
+  };
+  const dpadAt = e => {
+    const r = dpad.getBoundingClientRect(), dx = e.clientX - r.left - r.width / 2, dy = e.clientY - r.top - r.height / 2;
+    if (Math.hypot(dx, dy) < r.width * 0.12) return null;
+    return dpad.querySelector(Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? '.l' : '.r') : (dy < 0 ? '.u' : '.d'));
+  };
+  const hold = (el, at) => {
+    el.addEventListener('pointerdown', e => { e.preventDefault(); try { el.setPointerCapture(e.pointerId); } catch (err) { /* not a live pointer */ } touchKey(e.pointerId, at(e)); });
+    el.addEventListener('pointermove', e => { if (fingers.has(e.pointerId)) touchKey(e.pointerId, at(e)); });
+    for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) el.addEventListener(ev, e => touchKey(e.pointerId, null));
+    el.addEventListener('contextmenu', e => e.preventDefault());
+  };
+  hold(dpad, dpadAt);
+  let lastTap = 0;
+  document.getElementById('play').addEventListener('touchend', e => {
+    const now = e.timeStamp;
+    if (now - lastTap < 350) e.preventDefault();
+    lastTap = now;
+  }, { passive: false });
+  for (const k of document.querySelectorAll('.tkey')) hold(k, () => k);
+
+  let audio = null, soundOn = false;
+  const soundBtn = document.getElementById('sound');
+  soundBtn.addEventListener('click', () => {
+    soundOn = !soundOn;
+    if (soundOn && !audio) audio = { ctx: new AudioContext(), at: 0 };
+    if (audio) soundOn ? audio.ctx.resume() : audio.ctx.suspend();
+    if (soundOn && machine) machine.setSampleRate(audio.ctx.sampleRate);
+    soundBtn.setAttribute('aria-pressed', String(soundOn));
+    soundBtn.textContent = soundOn ? 'Sound on' : 'Sound off';
+    canvas.focus({ preventScroll: true });
+  });
+  const playFrame = m => {
+    if (!soundOn || !audio) return;
+    const s = m.samples(), n = s.length / 2, ctx = audio.ctx;
+    if (!n) return;
+    const now = ctx.currentTime;
+    if (audio.at < now) audio.at = now + 0.06;
+    if (audio.at - now > 0.25) return;                   // (running ahead: the disk's fast frames)
+    const b = ctx.createBuffer(2, n, ctx.sampleRate);
+    const l = b.getChannelData(0), r = b.getChannelData(1);
+    for (let i = 0; i < n; i++) { l[i] = s[2 * i] / 32768; r[i] = s[2 * i + 1] / 32768; }
+    const src = ctx.createBufferSource();
+    src.buffer = b; src.connect(ctx.destination); src.start(audio.at);
+    audio.at += n / ctx.sampleRate;
+  };
+  let fastDisk = true;
+  const speedBtn = document.getElementById('disk-speed');
+  speedBtn.addEventListener('click', () => {
+    fastDisk = !fastDisk;
+    speedBtn.setAttribute('aria-pressed', String(fastDisk));
+    speedBtn.textContent = fastDisk ? 'Fast disk' : 'Real disk speed';
+    canvas.focus({ preventScroll: true });
+  });
+
+  // ------------------------------------------------------------------ the +3
+  // Power on with the disk in drive A, press ENTER on the menu's Loader, then
+  // run 50 frames a second -- ten times that while the interrupts are off
+  // (the disk loading) when Fast disk is on.
+  const ENTER_AT = 110;
+  let module = null, roms = null, disk = null, draw = null, timer = 0, run = 0;
+  const start = async () => {
+    const me = ++run;
+    clearTimeout(timer);
+    say('Loading the emulator…');
+    try {
+      module ??= await WebAssembly.compile(await get('plus3.wasm'));
+      roms ??= await Promise.all([0, 1, 2, 3].map(i => get(`plus3-${i}.rom`)));
+      disk ??= await get('flashback-l1.dsk');
+    } catch (err) { say('Could not load the emulator: ' + (err?.message || err), true); return; }
+    if (me !== run) return;
+    const m = await Plus3.create(module, roms);
+    m.insertDisk(0, disk);
+    machine = m;
+    held = new Map(); down.clear();
+    if (audio) m.setSampleRate(audio.ctx.sampleRate);
+    const w = m.screenWidth, h = m.screenHeight - 1;    // (less the first line, whose border the core leaves as it was)
+    try { draw ??= makeDisplay(w, h); } catch (err) { say('The display failed: ' + err.message, true); return; }
+    let frames = 0, last = performance.now(), owed = 0, started = false, shown = '';
+    const show = text => { if (text !== shown) { say(text); shown = text; } };
+    say('');
+    const tick = () => {
+      if (me !== run) return;
+      const now = performance.now();
+      owed = Math.min(owed + (now - last) / 20, 4);
+      last = now;
+      for (let extra = 0; owed >= 1 || (fastDisk && !m.iff1 && extra < 10);) {
+        if (frames === ENTER_AT) m.setKey(6, 0x01, true);
+        if (frames === ENTER_AT + 5) m.setKey(6, 0x01, false);
+        m.runFrame();
+        playFrame(m);
+        frames++;
+        if (owed >= 1) owed--; else extra++;
+      }
+      draw(m.pixels().subarray(w));
+      if (!started && m.im === 2 && m.i === 0x5c) { started = true; canvas.focus({ preventScroll: true }); }
+      if (started) {
+        const room = SYMS.cur_room !== undefined ? m.peek(SYMS.cur_room) : '?';
+        show(m.iff1 ? '' : `Reading room ${room} off the disk…`);
+      }
+      timer = setTimeout(tick, Math.max(1, 20 - (performance.now() - now)));
+    };
+    timer = setTimeout(tick, 0);
+  };
+  document.getElementById('restart').addEventListener('click', () => { start(); canvas.focus({ preventScroll: true }); });
+  // fullscreen: the screen and the touch pad together; where the browser
+  // will not make an element fullscreen (the iPhone) the page fills the
+  // window instead.  The cross (or Esc, or the back gesture) leaves.
+  const play = document.getElementById('play');
+  const fsElement = () => document.fullscreenElement || document.webkitFullscreenElement;
+  const fsOn = on => { play.classList.toggle('fs', on); document.body.classList.toggle('fs-lock', on); canvas.focus({ preventScroll: true }); };
+  for (const ev of ['fullscreenchange', 'webkitfullscreenchange']) document.addEventListener(ev, () => fsOn(!!fsElement()));
+  // (a request may also neither succeed nor fail -- some embedded views --
+  // so whatever has not gone fullscreen after a moment fills the window)
+  document.getElementById('fullscreen').addEventListener('click', () => {
+    const req = play.requestFullscreen || play.webkitRequestFullscreen;
+    const fallback = () => { if (!fsElement()) fsOn(true); };
+    if (!req) return fallback();
+    try {
+      Promise.resolve(req.call(play, { navigationUI: 'hide' }))
+        .then(() => screen.orientation?.lock?.('landscape').catch(() => {}), fallback);
+    } catch (e) { return fallback(); }
+    setTimeout(fallback, 700);
+  });
+  document.getElementById('fs-exit').addEventListener('click', () => {
+    if (fsElement()) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    else fsOn(false);
+  });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && play.classList.contains('fs') && !fsElement()) fsOn(false); });
+  start();
+})();
+</script>
+<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "3c4511d5ce544783bca8d3e28f045a02"}'></script>
+</body>
+</html>

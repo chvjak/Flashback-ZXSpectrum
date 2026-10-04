@@ -1,0 +1,4 @@
+* text=auto eol=lf
+*.dsk binary
+*.rom binary
+*.wasm binary
